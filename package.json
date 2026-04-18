@@ -1,0 +1,42 @@
+{
+  "name": "@devscholar/node-with-jxa",
+  "version": "0.0.1",
+  "description": "Node.js IPC Bridge for JXA (JavaScript for Automation, macOS)",
+  "main": "./dist/index.js",
+  "types": "./types/index.d.ts",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "types",
+    "scripts"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "jxa",
+    "macos",
+    "cocoa",
+    "appkit",
+    "objective-c",
+    "osascript",
+    "gui",
+    "webkit"
+  ],
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "start": "node start.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.3"
+  }
+}
