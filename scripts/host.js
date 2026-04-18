@@ -340,6 +340,16 @@ function executeCommand(cmd) {
         }
         return ConvertToProtocol(unwrapped2);
     }
+    if (cmd.action === 'RegisterSubclass') {
+        // Spec shape mirrors standard JXA: { name, superclass, methods }.
+        // ResolveArg recursively unwraps the protocol object; each method's
+        // `implementation` arrives as a JS function (the sync-callback wrapper
+        // built in ResolveArg), which JXA accepts verbatim as an IMP.
+        var spec = ResolveArg(cmd.spec);
+        if (!spec || !spec.name) throw new Error("RegisterSubclass: missing name");
+        ObjC.registerSubclass(spec);
+        return { type: 'void' };
+    }
     if (cmd.action === 'StartApp') {
         // Defer the actual run() until after we send run_started + return from
         // the current dispatch frame, to avoid re-entering the run loop while

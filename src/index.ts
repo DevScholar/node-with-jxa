@@ -18,9 +18,9 @@ export function init(): void {
 
 /** Evaluate a raw JXA expression in the host process and return the result.
  *  Escape hatch for patterns that don't fit the Get/Invoke proxy model —
- *  currently just C struct constructors (NSMakeRect, ...).  ObjC.import and
- *  ObjC.unwrap are exposed via the `ObjC` namespace below; ObjC.registerSubclass
- *  will be exposed via ObjC.registerSubclass in a later pass. */
+ *  currently just C struct constructors (NSMakeRect, ...).  ObjC.import,
+ *  ObjC.unwrap, ObjC.deepUnwrap, ObjC.registerSubclass are all exposed
+ *  via the `ObjC` namespace below. */
 export function evalJxa<T = any>(source: string): T {
     initialize();
     const res = getIpc()!.send({ action: 'Eval', source });
@@ -89,14 +89,31 @@ function sendUnwrap(action: 'ObjCUnwrap' | 'ObjCDeepUnwrap', value: any): any {
     return createProxy(res);
 }
 
-/** Mirror of standard JXA's `ObjC` namespace.  Provides the three entry points
- *  you'd use in a standalone `osascript -l JavaScript` script:
+export interface ObjCMethodSpec {
+    /** ObjC type-encoding tuple: [returnType, [argTypes...]].
+     *  E.g. `['void', ['id']]` for `-(void)click:(id)sender`. */
+    types: [string, string[]];
+    /** JS implementation. Called with the ObjC args (minus `self`, which is
+     *  bound as `this` inside the function on the host side). */
+    implementation: (...args: any[]) => any;
+}
+
+export interface ObjCSubclassSpec {
+    name: string;
+    superclass?: string;
+    protocols?: string[];
+    properties?: Record<string, string>;
+    methods?: Record<string, ObjCMethodSpec>;
+}
+
+/** Mirror of standard JXA's `ObjC` namespace.  Provides the entry points you'd
+ *  use in a standalone `osascript -l JavaScript` script:
  *
  *      ObjC.import('AppKit');
  *      const js = ObjC.unwrap(nsString);
  *      const obj = ObjC.deepUnwrap(nsDictionary);
- *
- *  `registerSubclass` is not yet mirrored here — use `evalJxa` for now. */
+ *      ObjC.registerSubclass({ name, superclass, methods: { 'click:': {...} } });
+ */
 export const ObjC = {
     /** Load an Objective-C framework so its classes appear on `$`. */
     import(name: string): void {
@@ -116,6 +133,33 @@ export const ObjC = {
      *  `[NSString alloc]` before `-initWith...` runs). */
     deepUnwrap<T = any>(value: any): T {
         return sendUnwrap('ObjCDeepUnwrap', value) as T;
+    },
+
+    /** Register a new ObjC subclass whose method implementations are JS
+     *  functions running in this Node.js process.  When the method is invoked
+     *  from ObjC (e.g. a Cocoa target-action fires), the host pushes a sync
+     *  event to Node, runs the JS implementation, and sends the return value
+     *  back so the ObjC caller sees a normal method return.
+     *
+     *  Example (button target-action):
+     *
+     *      ObjC.registerSubclass({
+     *          name: 'MyHandler',
+     *          superclass: 'NSObject',
+     *          methods: {
+     *              'click:': {
+     *                  types: ['void', ['id']],
+     *                  implementation: (sender) => console.log('clicked', sender),
+     *              },
+     *          },
+     *      });
+     *      const handler = $.MyHandler.alloc.init;
+     *      button.setTarget(handler);
+     *      button.setAction('click:');
+     */
+    registerSubclass(spec: ObjCSubclassSpec): void {
+        initialize();
+        getIpc()!.send({ action: 'RegisterSubclass', spec: wrapArg(spec) });
     },
 };
 
