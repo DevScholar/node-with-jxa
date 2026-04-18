@@ -39,7 +39,6 @@ alert.runModal;
 | `importFramework(name)` | `ObjC.import(name)` on the host side. |
 | `runApp(target)` | Pre-replies to Node, then calls `target.run()` on the JXA main thread. Use for `NSApplication.sharedApplication`. |
 | `evalJxa(source)` | Evaluate raw JXA in the host process and return the result. Use for `ObjC.registerSubclass`, struct constructors, etc. |
-| `unwrap(value)` | `ObjC.deepUnwrap` over IPC. Converts NSString/NSNumber/NSArray/NSDictionary refs into plain JS. |
 | `hostLog(...args)` | Print to the host's stderr. |
 | `releaseObject(ref)` | Drop a ref proactively (otherwise V8 GC handles it). |
 | `init()` | Force-spawn the host (rarely needed; called lazily on first `$` access). |

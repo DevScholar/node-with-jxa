@@ -95,6 +95,15 @@ function ConvertToProtocol(v) {
     if (Array.isArray(v)) {
         return { type: 'array', value: v.map(ConvertToProtocol) };
     }
+    // Auto-unwrap ObjC scalar value types (NSString → string, NSNumber → number)
+    // so callers don't need an explicit unwrap() call for common leaf values.
+    try {
+        var scalar = ObjC.deepUnwrap(v);
+        var st = typeof scalar;
+        if (st === 'string' || st === 'number' || st === 'boolean') {
+            return { type: 'primitive', value: scalar };
+        }
+    } catch (_e) {}
     // Everything else (ObjC instances, classes, methods, structs) → ref.
     var id = storeObject(v);
     return { type: 'ref', id: id };

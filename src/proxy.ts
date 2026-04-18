@@ -5,6 +5,23 @@ import type { JxaProxy, JxaRef } from './types.js';
 
 export type { JxaProxy } from './types.js';
 
+// Normalize an objcjs-types-style selector (using `$` to separate ObjC
+// selector parts, e.g. `initWithContentRect$styleMask$backing$defer$`) into
+// the JXA camelCase form (`initWithContentRectStyleMaskBackingDefer`) that
+// the host actually dispatches.  Names without `$` pass through unchanged so
+// plain JXA code ($.NSString.stringWithUTF8String) keeps working.
+function normalizeSelector(name: string): string {
+    if (name.indexOf('$') < 0) return name;
+    const parts = name.split('$').filter(p => p.length > 0);
+    if (parts.length === 0) return name;
+    let out = parts[0];
+    for (let i = 1; i < parts.length; i++) {
+        const p = parts[i];
+        out += p.charAt(0).toUpperCase() + p.slice(1);
+    }
+    return out;
+}
+
 // "Invoke-aware" wrapper: returned when a property access resolves to an
 // ObjC ref (instance, class, or bound method).  It remembers parent + name
 // so that subsequent invocations dispatch via Invoke(parentId, propName, args)
