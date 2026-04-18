@@ -70,7 +70,12 @@ export class IpcWorker {
             const msg = this.readOne();
             if (msg.kind === 'eof') {
                 this.exited = true;
-                return { type: 'exit' };
+                // The host died (commonly: JXA segfault triggered by an
+                // unsupported call — e.g. CALayer.setBackgroundColor(CGColor)
+                // on macOS sequoia).  Surface it as an error instead of letting
+                // callers receive `undefined` and explode later with cryptic
+                // "is not a function" messages.
+                throw new Error('JXA host exited unexpectedly (likely a JXA crash). The last call probably triggered an internal JXA bug — try a different API.');
             }
             if (msg.kind === 'event') { this.handleEvent(msg.data); continue; }
             if (msg.kind === 'async_event') { this.handleAsyncEvent(msg.data); continue; }
@@ -85,7 +90,7 @@ export class IpcWorker {
     }
 
     send(cmd: any): any {
-        if (this.exited) return { type: 'exit' };
+        if (this.exited) throw new Error('JXA host has exited; cannot send further commands.');
         const seq = ++this.seqCounter;
         cmd._seq = seq;
         try { fs.writeSync(this.fdWrite, JSON.stringify(cmd) + '\n'); }

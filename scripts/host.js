@@ -21,6 +21,16 @@ var fdReader = $.NSFileHandle.alloc.initWithFileDescriptor(3);
 var fdWriter = $.NSFileHandle.alloc.initWithFileDescriptor(4);
 var stderrFh = $.NSFileHandle.fileHandleWithStandardError;
 
+// Private run-loop mode used while a JS callback is on the stack and we're
+// pumping the loop waiting for Node's reply.  Pumping in NSDefaultRunLoopMode
+// would let AppKit dispatch unrelated events on the same call stack — most
+// notably, NSGestureRecognizer auto-resets its state from Ended (3) back to
+// Possible (0) the moment AppKit gets a chance to run, so a JS handler that
+// re-reads `gesture.state` after sending an IPC ends up seeing 0.  Cocoa
+// itself uses NSConnectionReplyMode for the same purpose; we mirror that.
+var NESTED_MODE = $.NSString.stringWithUTF8String('NwjxaNestedReplyMode');
+var NESTED_MODES_ARR = $([NESTED_MODE, $.NSDefaultRunLoopMode]);
+
 // ---------- low-level I/O ----------
 
 function writeRaw(s) {
@@ -394,10 +404,13 @@ function processNestedCommands() {
     inNestedRead = true;
     try {
         while (true) {
-            // Wait for at least one full line.
+            // Wait for at least one full line.  Pump in our private mode so
+            // AppKit can't dispatch UI/gesture events on top of the in-flight
+            // JS callback (which would, e.g., reset NSGestureRecognizer state
+            // from Ended→Possible before the JS handler reads it back).
             while (pendingBuf.indexOf('\n') < 0) {
                 $.NSRunLoop.currentRunLoop.runModeBeforeDate(
-                    $.NSDefaultRunLoopMode,
+                    NESTED_MODE,
                     $.NSDate.dateWithTimeIntervalSinceNow(60)
                 );
             }
@@ -433,9 +446,9 @@ ObjC.registerSubclass({
                 var nsData = info.objectForKey($.NSFileHandleNotificationDataItem);
                 appendNSData(nsData);
                 // Re-arm BEFORE dispatching so back-to-back chunks aren't dropped.
-                // JXA auto-invokes zero-arg ObjC methods on property access — adding
-                // parens would call the `undefined` return value of the invocation.
-                fdReader.readInBackgroundAndNotify;
+                // Re-arm in both default mode and our nested-reply mode so IPC
+                // keeps flowing while a JS callback is pumping in NESTED_MODE.
+                fdReader.readInBackgroundAndNotifyForModes(NESTED_MODES_ARR);
                 drainAndExecute();
             }
         }
@@ -449,7 +462,7 @@ $.NSNotificationCenter.defaultCenter.addObserverSelectorNameObject(
     $.NSFileHandleReadCompletionNotification,
     fdReader
 );
-fdReader.readInBackgroundAndNotify;
+fdReader.readInBackgroundAndNotifyForModes(NESTED_MODES_ARR);
 
 // ---------- main loop ----------
 //
