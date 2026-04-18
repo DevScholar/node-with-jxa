@@ -43,12 +43,18 @@ function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any)
             return (resolvedProxy as any)?.[sub];
         },
         set(_t, sub: string | symbol, value: any) {
+            // Delegate to the resolved ref proxy so that
+            //   $.NSApplication.sharedApplication.delegate = d
+            // becomes Set(targetId=sharedAppId, property='delegate', value=d),
+            // which the host translates to `[sharedApp setDelegate:d]`.
+            // Forwarding to (resolvedProxy as any)[sub] = value reuses the
+            // ref-proxy set trap below.
             if (typeof sub !== 'string') return false;
-            getIpc()!.send({
-                action: 'Set', targetId: parentId, property: propName,
-                value: wrapArg(value, parentId)
-            });
-            return true;
+            if (resolvedProxy && (typeof resolvedProxy === 'object' || typeof resolvedProxy === 'function')) {
+                (resolvedProxy as any)[sub] = value;
+                return true;
+            }
+            return false;
         },
         apply(_t, _this, args) {
             const netArgs = args.map(a => wrapArg(a, parentId));
