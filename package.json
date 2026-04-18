@@ -6,10 +6,22 @@
   "types": "./types/index.d.ts",
   "type": "module",
   "license": "MIT",
+  "author": "devscholar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devscholar/node-with-jxa.git"
+  },
+  "homepage": "https://github.com/devscholar/node-with-jxa#readme",
+  "bugs": {
+    "url": "https://github.com/devscholar/node-with-jxa/issues"
+  },
+  "os": ["darwin"],
   "files": [
     "dist",
     "types",
-    "scripts"
+    "scripts",
+    "LICENSE",
+    "README.md"
   ],
   "engines": {
     "node": ">=18.0.0"

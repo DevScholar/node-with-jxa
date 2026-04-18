@@ -1,5 +1,7 @@
 # @devscholar/node-with-jxa
 
+> 🍎 **macOS only.** This package spawns `osascript -l JavaScript` and will throw on Linux/Windows.
+>
 > ⚠️ Alpha — expect breaking changes.
 
 Node.js IPC bridge for **JXA** (JavaScript for Automation) on macOS. Drive

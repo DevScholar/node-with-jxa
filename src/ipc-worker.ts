@@ -8,6 +8,16 @@ import * as fs from 'node:fs';
 
 const port: MessagePort = workerData.port;
 const fdRead: number = workerData.fdRead;
+// SharedArrayBuffer slot the main thread Atomics.wait()s on. We bump and
+// notify after every postMessage so the main thread wakes promptly without
+// having to spin on receiveMessageOnPort.
+const notify = new Int32Array(workerData.notify as SharedArrayBuffer);
+
+function postAndNotify(msg: any) {
+    port.postMessage(msg);
+    Atomics.add(notify, 0, 1);
+    Atomics.notify(notify, 0);
+}
 
 let pending = Buffer.alloc(0);
 
@@ -34,12 +44,20 @@ function readLine(): string | null {
 while (true) {
     const line = readLine();
     if (line === null) {
-        port.postMessage({ kind: 'eof' });
+        postAndNotify({ kind: 'eof' });
         break;
     }
     if (!line.trim()) continue;
     let msg: any;
-    try { msg = JSON.parse(line); } catch { continue; }
+    try {
+        msg = JSON.parse(line);
+    } catch (e: any) {
+        // Malformed line from the host — almost always indicates a host bug
+        // (interleaved stderr writeRaw, partial flush, etc.). Log it so it
+        // isn't swallowed silently; the host's framing is broken either way.
+        console.error('[node-with-jxa] host sent invalid JSON:', e?.message || e, '— line:', line.slice(0, 200));
+        continue;
+    }
     const kind = msg.type === 'event' ? 'event' : msg.type === 'async_event' ? 'async_event' : 'response';
-    port.postMessage({ kind, data: msg });
+    postAndNotify({ kind, data: msg });
 }

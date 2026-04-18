@@ -48,9 +48,23 @@ export function startEventDrain(): void {
 export function drainCallbacks(): void {
     const ipc = getIpc();
     if (!ipc) return;
-    if (releaseQueue.length > 0) {
-        for (const id of releaseQueue.splice(0)) {
-            try { ipc.send({ action: 'Release', targetId: id }); } catch {}
+    // Process one ID at a time so a send() failure (host died) doesn't
+    // silently drop every remaining ID in the queue. If send throws, push
+    // the unsent IDs back so a future attempt can retry — but if the host
+    // is exited, just discard (the host process is gone, the GC is moot).
+    while (releaseQueue.length > 0) {
+        const id = releaseQueue.shift()!;
+        try {
+            ipc.send({ action: 'Release', targetId: id });
+        } catch {
+            if (ipc.isExited) {
+                releaseQueue.length = 0;
+                break;
+            }
+            // Transient failure — put it back at the front and stop draining
+            // this tick so we don't busy-loop on a broken pipe.
+            releaseQueue.unshift(id);
+            break;
         }
     }
     ipc.drainEvents();

@@ -155,6 +155,14 @@ function ResolveArg(arg) {
             for (var i = 0; i < arguments.length; i++) cbArgs.push(ConvertToProtocol(arguments[i]));
             writeRaw(JSON.stringify({ type: 'event', callbackId: cbId, args: cbArgs }));
             var res = processNestedCommands();
+            if (res && res.error) {
+                // Surface JS-side callback errors to stderr; we can't safely
+                // throw across the ObjC frame above us (would unwind through
+                // Cocoa's dispatch and likely crash the host), but we must
+                // not silently swallow them either.
+                debugLog('callback ' + cbId + ' threw: ' + res.error);
+                return null;
+            }
             if (res && res.result && res.result.type === 'primitive') return res.result.value;
             return null;
         };
