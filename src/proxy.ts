@@ -61,6 +61,46 @@ function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any)
     });
 }
 
+// AllocProxy: returned when the user accesses `.alloc` on a class ref.
+// We do NOT actually invoke +alloc here, because that would expose the
+// class-cluster placeholder (e.g. NSPlaceholderString) to the Node side, and
+// any subsequent IPC Get on it ("Did you forget to nest alloc and init?")
+// crashes JXA's bridge.  Instead, we capture the next access — typically
+// `.init` (zero-arg auto-invoke) or `.initWithXxx(args)` (call) — and emit a
+// single AllocInit IPC that evaluates `cls.alloc.initXxx(...)` atomically on
+// the JXA side, mirroring how standalone JXA chains alloc + init in one
+// expression.
+function createAllocProxy(classId: string): any {
+    return new Proxy(function() {}, {
+        get(_t, prop: string | symbol) {
+            if (typeof prop !== 'string') return undefined;
+            // Bare `.init` (no parens) — JXA's classic zero-arg auto-invoke.
+            // Eagerly send AllocInit with no args and return the resulting
+            // instance proxy.
+            if (prop === 'init') {
+                const res = getIpc()!.send({
+                    action: 'AllocInit', classId, initMethod: 'init', args: []
+                });
+                return createProxy(res);
+            }
+            // Multi-arg initializers — return a callable that forwards the
+            // arguments to AllocInit when invoked.  Other selectors after
+            // alloc (rare in practice) reach this branch too; if the user
+            // calls them, the host-side eval will surface a JXA error.
+            return new Proxy(function() {}, {
+                apply(_t2, _this, args) {
+                    const netArgs = args.map(a => wrapArg(a));
+                    const res = getIpc()!.send({
+                        action: 'AllocInit', classId, initMethod: prop,
+                        args: netArgs
+                    });
+                    return createProxy(res);
+                }
+            });
+        }
+    });
+}
+
 // Base ref proxy: created from {type:'ref', id} metadata.
 // Get eagerly fetches the value (so primitives come back directly), then wraps
 // non-primitive results in an invoke-aware proxy.
@@ -77,6 +117,11 @@ function createRefProxy<T extends object = object>(id: string): JxaProxy<T> {
         get: (_t, prop: string | symbol) => {
             if (prop === '__ref') return id;
             if (typeof prop !== 'string') return undefined;
+
+            // Intercept `.alloc` BEFORE issuing IPC.  Returning a placeholder
+            // ref to Node and then doing a separate Get for `.initWithXxx`
+            // crashes JXA (-length on NSPlaceholderString).  See AllocProxy.
+            if (prop === 'alloc') return createAllocProxy(id);
 
             // Eagerly Get so primitives (numbers, strings, bools) are returned
             // as native JS values rather than as proxies the user has to unwrap.

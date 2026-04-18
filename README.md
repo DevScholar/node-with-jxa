@@ -19,9 +19,9 @@ property write, and method call across a pair of Unix FIFOs.
 ## Quick start
 
 ```ts
-import { $, importFramework, runApp } from '@devscholar/node-with-jxa';
+import { $, ObjC, runApp } from '@devscholar/node-with-jxa';
 
-importFramework('AppKit');
+ObjC.import('AppKit');
 
 const app = $.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyRegular);
@@ -36,12 +36,18 @@ alert.runModal;
 | Export | Purpose |
 | --- | --- |
 | `$` | Root proxy. `$.NSWindow`, `$.NSString`, … resolve to ObjC class refs. |
-| `importFramework(name)` | `ObjC.import(name)` on the host side. |
+| `ObjC.import(name)` | Load an Objective-C framework. |
+| `ObjC.unwrap(ref)` | NSString/NSNumber → JS value (single-level). |
+| `ObjC.deepUnwrap(ref)` | NSArray/NSDictionary → JS value, recursively. |
 | `runApp(target)` | Pre-replies to Node, then calls `target.run()` on the JXA main thread. Use for `NSApplication.sharedApplication`. |
 | `evalJxa(source)` | Evaluate raw JXA in the host process and return the result. Use for `ObjC.registerSubclass`, struct constructors, etc. |
 | `hostLog(...args)` | Print to the host's stderr. |
 | `releaseObject(ref)` | Drop a ref proactively (otherwise V8 GC handles it). |
 | `init()` | Force-spawn the host (rarely needed; called lazily on first `$` access). |
+
+`$` and `ObjC` match standard JXA 1:1 — code that works in a standalone
+`osascript -l JavaScript` script reads the same under node-with-jxa. Everything
+else (`runApp`, `evalJxa`, `hostLog`) is node-with-jxa-specific plumbing.
 
 ## Architecture
 

@@ -95,16 +95,13 @@ function ConvertToProtocol(v) {
     if (Array.isArray(v)) {
         return { type: 'array', value: v.map(ConvertToProtocol) };
     }
-    // Auto-unwrap ObjC scalar value types (NSString → string, NSNumber → number)
-    // so callers don't need an explicit unwrap() call for common leaf values.
-    try {
-        var scalar = ObjC.deepUnwrap(v);
-        var st = typeof scalar;
-        if (st === 'string' || st === 'number' || st === 'boolean') {
-            return { type: 'primitive', value: scalar };
-        }
-    } catch (_e) {}
     // Everything else (ObjC instances, classes, methods, structs) → ref.
+    // We intentionally do NOT call ObjC.deepUnwrap here — it introspects the
+    // object by invoking methods like -length / -UTF8String, which crash on
+    // class-cluster placeholders (e.g. NSPlaceholderString returned by
+    // [NSString alloc]) and can raise exceptions that escape try/catch.
+    // This matches standard JXA (NSString doesn't auto-unwrap to a JS string
+    // either) and node-with-gjs.  Callers who want a JS value use unwrap().
     var id = storeObject(v);
     return { type: 'ref', id: id };
 }
@@ -195,6 +192,34 @@ function executeCommand(cmd) {
             throw new Error("Class not found on $: " + cmd.name);
         }
         return ConvertToProtocol(cls);
+    }
+    if (cmd.action === 'AllocInit') {
+        // Evaluate `cls.alloc.<initMethod>(...args)` as a SINGLE JS expression.
+        // JXA only chains alloc + init atomically when the entire chain is one
+        // expression — otherwise the class-cluster placeholder (e.g.
+        // NSPlaceholderString from [NSString alloc]) escapes and crashes on
+        // any subsequent method access ("Did you forget to nest alloc and
+        // init?").  The proxy's AllocProxy defers `.alloc` precisely so this
+        // action can build the atomic chain.
+        var classObj = objectStore[cmd.classId];
+        if (!classObj) throw new Error("AllocInit: class not found: " + cmd.classId);
+        var initMethod = cmd.initMethod;
+        var args = (cmd.args || []).map(ResolveArg);
+        var inst;
+        if (args.length === 0) {
+            // Zero-arg init: bare property access auto-invokes in JXA, so
+            // `cls.alloc.init` returns the initialized instance directly.
+            // Function-wrapped to keep this an atomic single-expression eval.
+            inst = (new Function('cls', 'return cls.alloc.' + initMethod + ';'))(classObj);
+        } else {
+            // Multi-arg initWith…: generate the call with positional args.
+            var argRefs = args.map(function(_, i) { return 'a[' + i + ']'; }).join(',');
+            var fn = new Function('cls', 'a',
+                'return cls.alloc.' + initMethod + '(' + argRefs + ');'
+            );
+            inst = fn(classObj, args);
+        }
+        return ConvertToProtocol(inst);
     }
     if (cmd.action === 'Get') {
         var target = objectStore[cmd.targetId];
@@ -293,16 +318,27 @@ function executeCommand(cmd) {
         var v = eval('(' + cmd.source + ')');
         return ConvertToProtocol(v);
     }
-    if (cmd.action === 'Unwrap') {
+    if (cmd.action === 'ObjCUnwrap') {
+        // Single-level ObjC.unwrap: NSString → JS string, NSNumber → number, etc.
+        // Leaves nested ObjC objects (e.g. array elements) as ObjC refs.
         var target5 = objectStore[cmd.targetId];
         var unwrapped;
-        try { unwrapped = ObjC.deepUnwrap(target5); }
-        catch (e) {
-            // Fallback for objects deepUnwrap can't handle: try .description.
-            try { unwrapped = ObjC.unwrap(target5.description); }
-            catch (e2) { unwrapped = String(target5); }
-        }
+        try { unwrapped = ObjC.unwrap(target5); }
+        catch (_e) { unwrapped = null; }
         return ConvertToProtocol(unwrapped);
+    }
+    if (cmd.action === 'ObjCDeepUnwrap') {
+        // Recursive ObjC.deepUnwrap: NSArray/NSDictionary unwrap their contents
+        // too.  WARNING: crashes on class-cluster placeholders (e.g. the object
+        // returned by [NSString alloc]) — they define abstract -length etc.
+        var target6 = objectStore[cmd.targetId];
+        var unwrapped2;
+        try { unwrapped2 = ObjC.deepUnwrap(target6); }
+        catch (e) {
+            try { unwrapped2 = ObjC.unwrap(target6.description); }
+            catch (_e2) { unwrapped2 = null; }
+        }
+        return ConvertToProtocol(unwrapped2);
     }
     if (cmd.action === 'StartApp') {
         // Defer the actual run() until after we send run_started + return from

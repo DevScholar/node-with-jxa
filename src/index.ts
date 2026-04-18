@@ -16,16 +16,11 @@ export function init(): void {
     initialize();
 }
 
-/** Load an Objective-C framework so its classes appear on `$`.
- *  Equivalent to JXA's `ObjC.import('AppKit')`. */
-export function importFramework(name: string): void {
-    initialize();
-    getIpc()!.send({ action: 'LoadFramework', name });
-}
-
 /** Evaluate a raw JXA expression in the host process and return the result.
- *  Useful for ObjC.registerSubclass(), C struct constructors (NSMakeRect, ...),
- *  and other patterns that don't fit the Get/Invoke proxy model. */
+ *  Escape hatch for patterns that don't fit the Get/Invoke proxy model —
+ *  currently just C struct constructors (NSMakeRect, ...).  ObjC.import and
+ *  ObjC.unwrap are exposed via the `ObjC` namespace below; ObjC.registerSubclass
+ *  will be exposed via ObjC.registerSubclass in a later pass. */
 export function evalJxa<T = any>(source: string): T {
     initialize();
     const res = getIpc()!.send({ action: 'Eval', source });
@@ -67,23 +62,6 @@ export function hostLog(...args: any[]): void {
     getIpc()!.send({ action: 'Print', args: args.map(a => wrapArg(a)) });
 }
 
-/** Recursively convert an ObjC value (NSString, NSNumber, NSArray, NSDictionary, ...)
- *  into the equivalent plain JavaScript value.  Equivalent to JXA's
- *  `ObjC.deepUnwrap(value)`.  Returns `value` unchanged if it isn't a JxaRef. */
-export function unwrap<T = any>(value: any): T {
-    // A JxaRef is a Proxy wrapping a function stub, so typeof is 'function'.
-    // Check for __ref directly rather than typeof, otherwise function-shaped
-    // proxies (which every JXA ref is) slip through.
-    if (value === null || value === undefined) return value as T;
-    const t = typeof value;
-    if (t !== 'object' && t !== 'function') return value as T;
-    const id = (value as any).__ref;
-    if (!id) return value as T;
-    initialize();
-    const res = getIpc()!.send({ action: 'Unwrap', targetId: id });
-    return createProxy(res) as T;
-}
-
 /** Hand control to a Cocoa application object whose `-run` method should be
  *  invoked on the host's main thread (e.g. `$.NSApplication.sharedApplication`).
  *  Returns immediately; Node.js stays alive until the app terminates and the
@@ -100,12 +78,53 @@ export function runApp(target: JxaRef): void {
     }
 }
 
+function sendUnwrap(action: 'ObjCUnwrap' | 'ObjCDeepUnwrap', value: any): any {
+    if (value === null || value === undefined) return value;
+    const t = typeof value;
+    if (t !== 'object' && t !== 'function') return value;
+    const id = (value as any).__ref;
+    if (!id) return value;
+    initialize();
+    const res = getIpc()!.send({ action, targetId: id });
+    return createProxy(res);
+}
+
+/** Mirror of standard JXA's `ObjC` namespace.  Provides the three entry points
+ *  you'd use in a standalone `osascript -l JavaScript` script:
+ *
+ *      ObjC.import('AppKit');
+ *      const js = ObjC.unwrap(nsString);
+ *      const obj = ObjC.deepUnwrap(nsDictionary);
+ *
+ *  `registerSubclass` is not yet mirrored here — use `evalJxa` for now. */
+export const ObjC = {
+    /** Load an Objective-C framework so its classes appear on `$`. */
+    import(name: string): void {
+        initialize();
+        getIpc()!.send({ action: 'LoadFramework', name });
+    },
+
+    /** Single-level unwrap: NSString → JS string, NSNumber → number, etc.
+     *  Container elements (NSArray items, NSDictionary values) stay as refs.
+     *  Returns `value` unchanged if it isn't a JxaRef. */
+    unwrap<T = any>(value: any): T {
+        return sendUnwrap('ObjCUnwrap', value) as T;
+    },
+
+    /** Recursive unwrap: also unwraps container elements.  WARNING: crashes
+     *  on class-cluster placeholders (e.g. the object returned by
+     *  `[NSString alloc]` before `-initWith...` runs). */
+    deepUnwrap<T = any>(value: any): T {
+        return sendUnwrap('ObjCDeepUnwrap', value) as T;
+    },
+};
+
 /** Root proxy: every property access returns the corresponding `$.<Class>` ref.
  *  Usage:
- *      importFramework('AppKit');
- *      const alert = $.NSAlert.alloc().init();
+ *      ObjC.import('AppKit');
+ *      const alert = $.NSAlert.alloc.init;
  *      alert.setMessageText('Hello');
- *      alert.runModal();
+ *      alert.runModal;
  */
 export const $: any = new Proxy({} as any, {
     get(_t, prop: string | symbol) {

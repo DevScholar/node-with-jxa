@@ -84,12 +84,12 @@ export function initialize() {
 
     // osascript inherits fds 3 and 4 just like any other child process —
     // JXA reads/writes them via NSFileHandle.alloc.initWithFileDescriptor(fd).
-    // stdin is set to 'ignore' (not 'inherit') because 'inherit' on macOS keeps
-    // the parent's TTY stdin handle ref'd, preventing Node from exiting after
-    // the user script finishes.  stdout/stderr stay inherited so the host's
-    // own logging (and `hostLog`) goes to the parent terminal.
+    // stdin is 'inherit' so the JXA host can read from the terminal via
+    // NSFileHandle.fileHandleWithStandardInput (matches node-with-gjs).
+    // Node's watchdog below explicitly calls process.exit(0) once the script
+    // is idle, so a ref'd TTY stdin handle does not prevent clean exit.
     const proc = cp.spawn(osascriptPath, ['-l', 'JavaScript', scriptPath], {
-        stdio: ['ignore', 'inherit', 'inherit', fdReqRead, fdResWrite],
+        stdio: ['inherit', 'inherit', 'inherit', fdReqRead, fdResWrite],
         env: process.env,
     });
 
