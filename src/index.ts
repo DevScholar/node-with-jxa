@@ -100,18 +100,11 @@ export function drainCallbacks(): void {
     ipc.drainEvents();
 }
 
-/** Print to the host's stderr (visible in the parent terminal). Convenience for debugging. */
-export function hostLog(...args: any[]): void {
-    initialize();
-    getIpc()!.send({ action: 'Print', args: args.map(a => wrapArg(a)) });
-}
-
-/** Hand control to a Cocoa application object whose `-run` method should be
- *  invoked on the host's main thread (e.g. `$.NSApplication.sharedApplication`).
- *  Returns immediately; Node.js stays alive until the app terminates and the
- *  JXA host exits, at which point any post-`runApp` code in your script also
- *  finishes. */
-export function runApp(target: JxaRef): void {
+/** @internal Hand control to a Cocoa application object whose `-run` method
+ *  should be invoked on the host's main thread. Not part of the public API —
+ *  standard JXA calls `app.run()` directly; the library is responsible for
+ *  wiring that call to this helper (see host.js / proxy.ts). */
+function runApp(target: JxaRef): void {
     initialize();
     const id = target?.__ref;
     if (!id) throw new Error('runApp: argument has no __ref');
@@ -121,6 +114,7 @@ export function runApp(target: JxaRef): void {
         startPolling();
     }
 }
+void runApp;
 
 function sendUnwrap(action: 'ObjCUnwrap' | 'ObjCDeepUnwrap', value: any): any {
     if (value === null || value === undefined) return value;

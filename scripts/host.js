@@ -175,6 +175,21 @@ function ResolveArg(arg) {
 var appStarted = false;
 var appTarget = null;
 
+// `[NSApplication run]` blocks the calling thread for the lifetime of the
+// app, so we can't dispatch it inline like a normal Invoke (Node would never
+// see a reply, and we'd be re-entering the run loop from inside an observer
+// callback). Detect calls to -run on an NSApplication instance and treat
+// them as the StartApp dance: stash the target, return run_started, and let
+// the top-level loop in this file pick it up after the current dispatch
+// frame unwinds.
+function isNSAppRun(target, name) {
+    if (name !== 'run') return false;
+    try {
+        if (!target || typeof target.isKindOfClass !== 'function') return false;
+        return !!target.isKindOfClass($.NSApplication);
+    } catch (e) { return false; }
+}
+
 // JXA's ObjC bound methods are `typeof === 'function'` but don't always expose
 // Function.prototype.apply/call, so we can't rely on `fn.apply(thisArg, args)`.
 // Use direct invocation; fall back to Function.prototype.apply.call for the
@@ -241,6 +256,11 @@ function executeCommand(cmd) {
     }
     if (cmd.action === 'Get') {
         var target = objectStore[cmd.targetId];
+        if (isNSAppRun(target, cmd.property)) {
+            appStarted = true;
+            appTarget = target;
+            return { type: 'run_started' };
+        }
         var val;
         try { val = target[cmd.property]; }
         catch (e) { return { type: 'null' }; }
@@ -289,6 +309,11 @@ function executeCommand(cmd) {
         var args = (cmd.args || []).map(ResolveArg);
         if (target3 === undefined || target3 === null) {
             throw new Error("Invoke target missing: " + cmd.targetId);
+        }
+        if (isNSAppRun(target3, methodName)) {
+            appStarted = true;
+            appTarget = target3;
+            return { type: 'run_started' };
         }
         if (target3[methodName] === undefined || target3[methodName] === null) {
             throw new Error("Method not found: " + methodName);

@@ -193,6 +193,14 @@ function createRefProxy<T extends object = object>(id: string): JxaProxy<T> {
             // Eagerly Get so primitives (numbers, strings, bools) are returned
             // as native JS values rather than as proxies the user has to unwrap.
             const val = getIpc()!.send({ action: 'Get', targetId: id, property: prop });
+            if (val?.type === 'run_started') {
+                // `app.run` Get auto-invoked on the host as StartApp.  Return a
+                // no-op callable so the standard JXA spelling `app.run()` (with
+                // parens) doesn't throw "is not a function" on the trailing call.
+                getIpc()!.refForApp();
+                startPolling();
+                return () => undefined;
+            }
             const resolved = createProxy(val);
 
             // Primitives, null, arrays of primitives, Uint8Arrays — wrap

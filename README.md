@@ -19,7 +19,7 @@ property write, and method call across a pair of Unix FIFOs.
 ## Quick start
 
 ```ts
-import { $, ObjC, runApp } from '@devscholar/node-with-jxa';
+import { $, ObjC } from '@devscholar/node-with-jxa';
 
 ObjC.import('AppKit');
 
@@ -44,14 +44,12 @@ alert.runModal;
 | `Path(posix)` | JXA file-path literal for scripting methods. |
 | `delay(seconds)` | Sleep on the JXA host thread (JXA's built-in `delay`). |
 | `Ref()` | Allocate a JXA out-parameter holder. |
-| `runApp(target)` | Pre-replies to Node, then calls `target.run()` on the JXA main thread. Use for `NSApplication.sharedApplication`. |
-| `hostLog(...args)` | Print to the host's stderr. |
 | `releaseObject(ref)` | Drop a ref proactively (otherwise V8 GC handles it). |
 | `init()` | Force-spawn the host (rarely needed; called lazily on first `$` access). |
 
 `$`, `ObjC`, `Application`, `Path`, `delay`, and `Ref` match standard JXA 1:1 —
 code that works in a standalone `osascript -l JavaScript` script reads the same
-under node-with-jxa. Everything else (`runApp`, `hostLog`) is node-with-jxa-specific plumbing.
+under node-with-jxa. Everything else (`releaseObject`, `init`) is node-with-jxa-specific plumbing.
 
 ### Calling-convention notes
 
