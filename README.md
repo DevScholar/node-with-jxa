@@ -41,15 +41,33 @@ alert.runModal;
 | `ObjC.import(name)` | Load an Objective-C framework. |
 | `ObjC.unwrap(ref)` | NSString/NSNumber → JS value (single-level). |
 | `ObjC.deepUnwrap(ref)` | NSArray/NSDictionary → JS value, recursively. |
+| `ObjC.registerSubclass(spec)` | Define a new ObjC class whose methods are JS functions. |
+| `Application(name)` | JXA scripting bridge to a macOS app (Finder, Safari, …). |
+| `Path(posix)` | JXA file-path literal for scripting methods. |
+| `delay(seconds)` | Sleep on the JXA host thread (JXA's built-in `delay`). |
+| `Ref()` | Allocate a JXA out-parameter holder. |
 | `runApp(target)` | Pre-replies to Node, then calls `target.run()` on the JXA main thread. Use for `NSApplication.sharedApplication`. |
-| `evalJxa(source)` | Evaluate raw JXA in the host process and return the result. Use for `ObjC.registerSubclass`, struct constructors, etc. |
 | `hostLog(...args)` | Print to the host's stderr. |
 | `releaseObject(ref)` | Drop a ref proactively (otherwise V8 GC handles it). |
 | `init()` | Force-spawn the host (rarely needed; called lazily on first `$` access). |
 
-`$` and `ObjC` match standard JXA 1:1 — code that works in a standalone
-`osascript -l JavaScript` script reads the same under node-with-jxa. Everything
-else (`runApp`, `evalJxa`, `hostLog`) is node-with-jxa-specific plumbing.
+`$`, `ObjC`, `Application`, `Path`, `delay`, and `Ref` match standard JXA 1:1 —
+code that works in a standalone `osascript -l JavaScript` script reads the same
+under node-with-jxa. Everything else (`runApp`, `hostLog`) is node-with-jxa-specific plumbing.
+
+### Calling-convention notes
+
+Standard JXA lets you write a zero-arg ObjC method either as bare property
+access (`arr.count`, `$.NSAlert.alloc.init`) or with parens (`arr.count()`,
+`$.NSAlert.alloc().init()`).  Both forms are supported here.
+
+One divergence: property reads that return a primitive (number/string/boolean)
+come back as a *callable wrapper* so `arr.count()` works too — arithmetic,
+string concat, template interpolation, `JSON.stringify`, and `console.log`
+all still show the underlying value (via `Symbol.toPrimitive` / `valueOf` /
+`toJSON` / custom inspect), but `typeof arr.count === 'function'`, not
+`'number'`.  If you need the primitive kind, use `Number(x)` / `String(x)` /
+`Boolean(x)` or call it (`x()`).
 
 ## Architecture
 
@@ -86,6 +104,7 @@ npm run build      # tsc → dist/ + types/
 
 See [`../node-with-jxa-examples`](../node-with-jxa-examples):
 
+- `src/finder-open-home.ts` — pure JXA style: `Application('Finder')` opens your home folder.
 - `src/foundation-hello.ts` — pure Foundation, no GUI.
 - `src/alert.ts` — modal `NSAlert`.
 - `src/window.ts` — `NSWindow` + `NSApplication.run()`.

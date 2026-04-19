@@ -253,7 +253,20 @@ function executeCommand(cmd) {
         // Heuristic: `typeof === 'function'` && `.length === 0`.  Methods that
         // take arguments keep length >= 1 and are returned as refs for the
         // Node proxy to Invoke via Invoke(parentId, propName, args).
-        if (typeof val === 'function' && val.length === 0) {
+        //
+        // EXCEPTION: scripting-bridge objects (Application(...) and the
+        // ObjectSpecifier chains they return — `app.windows[0]`, etc.) follow
+        // STANDARD JS calling conventions: `finder.activate()` with parens,
+        // not bare-property auto-invoke.  Auto-invoking those would silently
+        // fire commands the user only wanted to reference, and would break
+        // chains like `app.documents` (a deferred specifier, not a call).
+        var isScriptingBridge = false;
+        try {
+            if (typeof Application === 'function' && target instanceof Application) isScriptingBridge = true;
+            else if (typeof ObjectSpecifier === 'function' && target instanceof ObjectSpecifier) isScriptingBridge = true;
+        } catch (_e) { /* Application/ObjectSpecifier not in scope — leave false */ }
+
+        if (!isScriptingBridge && typeof val === 'function' && val.length === 0) {
             try {
                 var invoked;
                 try { invoked = val.call(target); }

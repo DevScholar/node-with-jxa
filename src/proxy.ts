@@ -1,5 +1,5 @@
 import { getIpc, proxyCache, gcRegistry } from './state.js';
-import { wrapArg } from './marshal.js';
+import { wrapArg, PRIMITIVE_BRAND } from './marshal.js';
 import { startPolling } from './poll.js';
 import type { JxaProxy, JxaRef } from './types.js';
 
@@ -31,6 +31,13 @@ function normalizeSelector(name: string): string {
 //   • Property access (.foo) is delegated to the resolved ref proxy.
 //   • Apply uses Invoke(parentId, propName, args) — correct ObjC dispatch.
 //   • __ref returns the resolved id so the wrapper can be passed as an arg.
+//
+//   • Apply with ZERO args returns the resolved value without re-invoking.
+//     The host already auto-invoked the zero-arg method during our Get (see
+//     host.js:~260), so `obj.method` bare gave us the return value.  Standard
+//     JXA also allows `obj.method()` with empty parens for the same call —
+//     making `()` a no-op identity keeps both spellings working without a
+//     double-invoke.
 function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any): any {
     const stub = function() {};
     return new Proxy(stub, {
@@ -57,6 +64,11 @@ function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any)
             return false;
         },
         apply(_t, _this, args) {
+            if (args.length === 0) {
+                // Standard JXA `obj.method()` parens-form — host already
+                // auto-invoked on Get, just hand back the same value.
+                return resolvedProxy;
+            }
             const netArgs = args.map(a => wrapArg(a, parentId));
             const res = getIpc()!.send({
                 action: 'Invoke', targetId: parentId, methodName: propName, args: netArgs
@@ -64,6 +76,47 @@ function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any)
             if (res?.type === 'run_started') { getIpc()!.refForApp(); startPolling(); return undefined; }
             return createProxy(res);
         }
+    });
+}
+
+// Wrap a primitive so that `()` is an identity call returning the same value.
+// Matches standard JXA calling conventions: `arr.count` (bare) and
+// `arr.count()` (parens) both give the count.  The returned value is
+// `typeof 'function'` rather than `'number'`/`'string'`/`'boolean'` — arithmetic,
+// string concat, template interpolation, JSON.stringify still work via
+// Symbol.toPrimitive/valueOf/toString, but explicit `typeof` checks need to
+// use `Number(x)` / `String(x)` / `.valueOf()` to recover the primitive kind.
+function makePrimitiveCallable<T extends number | string | boolean>(value: T): T {
+    const fn: any = () => value;
+    fn[Symbol.toPrimitive] = () => value;
+    fn.valueOf = () => value;
+    fn.toString = () => String(value);
+    fn.toJSON = () => value;
+    fn[PRIMITIVE_BRAND] = value;
+    // console.log / util.inspect should render the underlying primitive,
+    // not "[Function (anonymous)]".
+    fn[Symbol.for('nodejs.util.inspect.custom')] = () => value;
+    return fn as T;
+}
+
+// Wrap a non-primitive value so that `()` with zero args returns the value
+// unchanged (identity), and every other operation delegates to the target.
+// Used for instances coming out of `cls.alloc.init` so that both bare
+// `.init` (JXA idiom) and `.init()` (standard JS form) yield the instance.
+function makeCallableIdentity(target: any): any {
+    if (target === null || target === undefined) return target;
+    const t = typeof target;
+    if (t !== 'object' && t !== 'function') return target;
+    return new Proxy(function() {}, {
+        get(_t, prop: string | symbol) {
+            if (prop === '__ref') return (target as any).__ref;
+            return (target as any)[prop as any];
+        },
+        set(_t, prop: string | symbol, value: any) {
+            (target as any)[prop as any] = value;
+            return true;
+        },
+        apply(_t, _this, _args) { return target; },
     });
 }
 
@@ -78,16 +131,24 @@ function makeInvokeProxy(parentId: string, propName: string, resolvedProxy: any)
 // expression.
 function createAllocProxy(classId: string): any {
     return new Proxy(function() {}, {
+        // `cls.alloc()` parens-form — keep the chain deferred (returning the
+        // real placeholder would crash the JXA bridge on the next IPC Get,
+        // see comment above), so just hand back another AllocProxy that
+        // collapses to AllocInit on the next `.init` / `.initWith…`.
+        apply(_t, _this, _args) {
+            return createAllocProxy(classId);
+        },
         get(_t, prop: string | symbol) {
             if (typeof prop !== 'string') return undefined;
             // Bare `.init` (no parens) — JXA's classic zero-arg auto-invoke.
             // Eagerly send AllocInit with no args and return the resulting
-            // instance proxy.
+            // instance proxy.  Wrap in callable-identity so `.init()` parens
+            // form also works (returns the same instance).
             if (prop === 'init') {
                 const res = getIpc()!.send({
                     action: 'AllocInit', classId, initMethod: 'init', args: []
                 });
-                return createProxy(res);
+                return makeCallableIdentity(createProxy(res));
             }
             // Multi-arg initializers — return a callable that forwards the
             // arguments to AllocInit when invoked.  Other selectors after
@@ -134,10 +195,16 @@ function createRefProxy<T extends object = object>(id: string): JxaProxy<T> {
             const val = getIpc()!.send({ action: 'Get', targetId: id, property: prop });
             const resolved = createProxy(val);
 
-            // Primitives, null, arrays of primitives, Uint8Arrays — return directly.
+            // Primitives, null, arrays of primitives, Uint8Arrays — wrap
+            // primitives in a callable-identity so `arr.count` (bare JXA
+            // idiom) AND `arr.count()` (standard JS form) both produce the
+            // same value; see makePrimitiveCallable above for the typeof
+            // trade-off.
             if (resolved === null || resolved === undefined) return resolved;
             const t = typeof resolved;
-            if (t === 'number' || t === 'string' || t === 'boolean') return resolved;
+            if (t === 'number' || t === 'string' || t === 'boolean') {
+                return makePrimitiveCallable(resolved);
+            }
             if (resolved instanceof Uint8Array) return resolved;
             if (Array.isArray(resolved)) return resolved;
 

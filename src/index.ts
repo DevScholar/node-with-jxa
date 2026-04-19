@@ -16,15 +16,45 @@ export function init(): void {
     initialize();
 }
 
-/** Evaluate a raw JXA expression in the host process and return the result.
- *  Escape hatch for patterns that don't fit the Get/Invoke proxy model —
- *  currently just C struct constructors (NSMakeRect, ...).  ObjC.import,
- *  ObjC.unwrap, ObjC.deepUnwrap, ObjC.registerSubclass are all exposed
- *  via the `ObjC` namespace below. */
-export function evalJxa<T = any>(source: string): T {
+/** @internal Evaluate a raw JXA expression in the host process and return the
+ *  result.  Used internally by the JXA globals below (Application, Path, …).
+ *  Not part of the public API — falling back to raw source strings defeats
+ *  the purpose of the proxy bridge and is functionally equivalent to invoking
+ *  `osascript -l JavaScript` yourself.  Use the typed helpers instead. */
+function internalEval<T = any>(source: string): T {
     initialize();
     const res = getIpc()!.send({ action: 'Eval', source });
     return createProxy(res) as T;
+}
+
+/** Scripting bridge to a macOS application, identified by its process name or
+ *  bundle id.  Mirrors JXA's built-in `Application(name)`:
+ *
+ *      const finder = Application('Finder');
+ *      finder.activate();
+ *      finder.open(Path('/Users/me'));
+ */
+export function Application(name: string): any {
+    return internalEval(`Application(${JSON.stringify(name)})`);
+}
+
+/** POSIX file-path literal understood by every scripting-bridge method.
+ *  Mirrors JXA's built-in `Path(posix)`. */
+export function Path(posixPath: string): any {
+    return internalEval(`Path(${JSON.stringify(posixPath)})`);
+}
+
+/** Sleep for `seconds` on the JXA host thread.  Mirrors JXA's built-in
+ *  `delay(seconds)`.  Blocks Node's IPC round-trip until the host wakes up. */
+export function delay(seconds: number): void {
+    internalEval(`delay(${Number(seconds)})`);
+}
+
+/** Allocate a JXA out-parameter holder (JXA's built-in `Ref()`).  Pass to a
+ *  scripting method that writes into a reference argument, then read back
+ *  the populated value with `.value` or `[0]`. */
+export function Ref(): any {
+    return internalEval(`Ref()`);
 }
 
 export function releaseObject(proxy: JxaRef): void {

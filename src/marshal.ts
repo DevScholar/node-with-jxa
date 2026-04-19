@@ -2,6 +2,11 @@
 import { randomUUID } from 'node:crypto';
 import { callbackRegistry, objectCallbacks, pinProxy } from './state.js';
 
+// Brand placed on primitive-callable wrappers (see proxy.ts) so we can
+// distinguish them from genuine JS callbacks when marshalling args — both
+// are `typeof === 'function'`.
+export const PRIMITIVE_BRAND: unique symbol = Symbol.for('node-with-jxa.primitive');
+
 export function wrapArg(arg: any, ownerObjectId?: string): any {
     if (arg === null || arg === undefined) return { type: 'null' };
     if (arg.__ref) return { type: 'ref', id: arg.__ref };
@@ -11,6 +16,11 @@ export function wrapArg(arg: any, ownerObjectId?: string): any {
     }
 
     if (typeof arg === 'function') {
+        // Unwrap primitive-callable wrappers back to their underlying value
+        // so `obj.setTitle(str.length)` sends 'primitive', not 'callback'.
+        const branded = (arg as any)[PRIMITIVE_BRAND];
+        if (branded !== undefined) return { type: 'primitive', value: branded };
+
         const cbId = `cb_${randomUUID()}`;
         callbackRegistry.set(cbId, arg);
         if (ownerObjectId) {
