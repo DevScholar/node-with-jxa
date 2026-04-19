@@ -1,6 +1,6 @@
 {
   "name": "@devscholar/node-with-jxa",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Node.js IPC Bridge for JXA (JavaScript for Automation, macOS)",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",

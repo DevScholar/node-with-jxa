@@ -88,10 +88,28 @@ export function initialize() {
     // NSFileHandle.fileHandleWithStandardInput (matches node-with-gjs).
     // Node's watchdog below explicitly calls process.exit(0) once the script
     // is idle, so a ref'd TTY stdin handle does not prevent clean exit.
-    const proc = cp.spawn(osascriptPath, ['-l', 'JavaScript', scriptPath], {
-        stdio: ['inherit', 'inherit', 'inherit', fdReqRead, fdResWrite],
-        env: process.env,
-    });
+    //
+    // Deno does not support integer-fd stdio inheritance in child_process.spawn.
+    // Use bash as a shim: it opens the FIFOs by path and redirects them onto
+    // fd 3 and fd 4 before exec-ing osascript, so the JXA host sees the same
+    // fd layout.  Both ends are already open in Node from the three-step trick
+    // above, so bash's open() unblocks immediately without any deadlock risk.
+    // TODO: remove bash shim and use the Node.js path for Deno too once
+    //       denoland/deno#33140 ships in a stable release.
+    const isDenoRuntime = typeof (globalThis as any).Deno !== 'undefined';
+    function sq(s: string): string { return `'${s.replace(/'/g, "'\\''")}'`; }
+    const proc = isDenoRuntime
+        ? cp.spawn('bash', [
+              '-c',
+              `exec ${sq(osascriptPath)} -l JavaScript ${sq(scriptPath)} 3<${sq(reqPath)} 4>${sq(resPath)}`
+          ], {
+              stdio: ['inherit', 'inherit', 'inherit'],
+              env: process.env,
+          })
+        : cp.spawn(osascriptPath, ['-l', 'JavaScript', scriptPath], {
+              stdio: ['inherit', 'inherit', 'inherit', fdReqRead, fdResWrite],
+              env: process.env,
+          });
 
     fs.closeSync(fdReqRead);
     fs.closeSync(fdResWrite);
@@ -117,7 +135,7 @@ export function initialize() {
             return wrapArg(result);
         }
         return { type: 'null' };
-    });
+    }, isDenoRuntime ? resPath : undefined);
 
     setIpc(ipc);
     setInitialized(true);

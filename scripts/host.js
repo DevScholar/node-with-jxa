@@ -17,8 +17,16 @@
 
 ObjC.import('Foundation');
 
-var fdReader = $.NSFileHandle.alloc.initWithFileDescriptor(3);
-var fdWriter = $.NSFileHandle.alloc.initWithFileDescriptor(4);
+// Deno cannot inherit integer fds via child_process.spawn; it passes the FIFO
+// paths via env vars instead.  Node.js uses the normal fd-3/fd-4 path.
+var _reqPath = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('NWJXA_REQ_PATH'));
+var _resPath = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('NWJXA_RES_PATH'));
+var fdReader = _reqPath
+    ? $.NSFileHandle.fileHandleForReadingAtPath($.NSString.stringWithUTF8String(_reqPath))
+    : $.NSFileHandle.alloc.initWithFileDescriptor(3);
+var fdWriter = _resPath
+    ? $.NSFileHandle.fileHandleForWritingAtPath($.NSString.stringWithUTF8String(_resPath))
+    : $.NSFileHandle.alloc.initWithFileDescriptor(4);
 var stderrFh = $.NSFileHandle.fileHandleWithStandardError;
 
 // Private run-loop mode used while a JS callback is on the stack and we're

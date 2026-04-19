@@ -7,7 +7,13 @@ import type { MessagePort } from 'worker_threads';
 import * as fs from 'node:fs';
 
 const port: MessagePort = workerData.port;
-const fdRead: number = workerData.fdRead;
+// Under Deno, worker_threads isolates have separate resource tables, so the
+// fdRead from the main thread is unusable here.  If fdReadPath is supplied,
+// open the FIFO locally in this worker's context instead.
+// TODO: remove fdReadPath branch once denoland/deno#33039 ships in a stable release.
+const fdRead: number = workerData.fdReadPath
+    ? fs.openSync(workerData.fdReadPath as string, fs.constants.O_RDONLY)
+    : workerData.fdRead;
 // SharedArrayBuffer slot the main thread Atomics.wait()s on. We bump and
 // notify after every postMessage so the main thread wakes promptly without
 // having to spin on receiveMessageOnPort.
