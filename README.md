@@ -100,7 +100,7 @@ npm run build      # tsc → dist/ + types/
 
 ## Examples
 
-See [`../node-with-jxa-examples`](../node-with-jxa-examples):
+See [`node-with-jxa-examples`](https://github.com/DevScholar/node-with-jxa-examples):
 
 - `src/finder-open-home.ts` — pure JXA style: `Application('Finder')` opens your home folder.
 - `src/foundation-hello.ts` — pure Foundation, no GUI.
