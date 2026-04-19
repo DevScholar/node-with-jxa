@@ -20,7 +20,7 @@
     "dist",
     "types",
     "scripts",
-    "LICENSE",
+    "LICENSE.md",
     "README.md"
   ],
   "engines": {
