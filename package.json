@@ -6,7 +6,7 @@
   "types": "./types/index.d.ts",
   "type": "module",
   "license": "MIT",
-  "author": "devscholar",
+  "author": "DevScholar",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/devscholar/node-with-jxa.git"
