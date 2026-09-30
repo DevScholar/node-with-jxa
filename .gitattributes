@@ -1,0 +1,4 @@
+# Normalize line endings to LF on every platform, overriding any local
+# core.autocrlf setting.  `text=auto` lets Git auto-detect binary files
+# (which contain NUL bytes) and leave them untouched.
+* text=auto eol=lf
