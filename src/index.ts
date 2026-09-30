@@ -197,6 +197,22 @@ export const ObjC = {
      */
     registerSubclass(spec: ObjCSubclassSpec): void {
         initialize();
+        // Decide each method's dispatch mode from its ObjC return type (the
+        // `types[0]` tuple — standard JXA).  `void` methods are the overwhelming
+        // majority: they never return a value to ObjC, so they can fire-and-forget
+        // instead of pumping a nested run loop waiting for Node's reply.  That
+        // nested loop is exactly what poisons a re-entrant modal panel (e.g. a
+        // renderer IPC callback that opens NSOpenPanel), so keeping it only for
+        // the rare non-void methods (e.g. applicationShouldTerminateAfterLast
+        // WindowClosed: → bool) is both simpler and correct.  The user still
+        // writes plain JXA — no `async` keyword, no tagging.
+        if (spec.methods) {
+            for (const method of Object.values(spec.methods)) {
+                const ret = method.types?.[0];
+                (method.implementation as any).__nwjxa_async =
+                    ret === 'void' || ret === 'v';
+            }
+        }
         getIpc()!.send({ action: 'RegisterSubclass', spec: wrapArg(spec) });
     },
 };

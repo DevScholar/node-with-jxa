@@ -28,7 +28,18 @@ export function wrapArg(arg: any, ownerObjectId?: string): any {
             objectCallbacks.get(ownerObjectId)!.push(cbId);
             pinProxy(ownerObjectId);
         }
-        const isAsync = arg.constructor?.name === 'AsyncFunction';
+        // Sync vs async is decided by the ObjC method's *return type*, not by
+        // whether the JS function happens to be declared `async`.  ObjC
+        // subclasses (registerSubclass) tag each implementation with
+        // __nwjxa_async based on its `types[0]`: void → fire-and-forget (no
+        // nested run loop), anything else → synchronous round-trip so the
+        // return value reaches ObjC.  This is the ground truth for "does this
+        // callback need to block?" — a void method never returns a value, so a
+        // nested loop would only buy a deadlock against re-entrant modal panels.
+        const tagged = (arg as any).__nwjxa_async;
+        const isAsync = tagged !== undefined
+            ? tagged
+            : arg.constructor?.name === 'AsyncFunction';
         const descriptor: any = { type: 'callback', callbackId: cbId, async: isAsync };
         if ((arg as any).__syncReturn !== undefined) {
             descriptor.syncReturn = (arg as any).__syncReturn;
