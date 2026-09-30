@@ -8,6 +8,25 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// macOS FIFOs have an 8192-byte buffer. A single writeSync() larger than that
+// blocks once the buffer fills (or returns a partial count), which deadlocks
+// the synchronous request/response round-trip: the sender waits for the write
+// to finish while the receiver waits for the sender to finish sending. Write
+// in ≤4096-byte chunks and loop until the whole message is flushed. The
+// receivers (ipc-worker.ts and scripts/host.js) already reassemble
+// multi-chunk writes into whole lines, so no read-side change is needed.
+const FIFO_CHUNK = 4096;
+
+function writeAll(fd: number, s: string): void {
+    const buf = Buffer.from(s, 'utf8');
+    let off = 0;
+    while (off < buf.length) {
+        const n = fs.writeSync(fd, buf, off, Math.min(FIFO_CHUNK, buf.length - off));
+        if (n <= 0) throw new Error(`FIFO write failed (wrote ${n} bytes of ${buf.length})`);
+        off += n;
+    }
+}
+
 export class IpcWorker {
     private worker: Worker;
     private port: MessagePort;
@@ -91,7 +110,7 @@ export class IpcWorker {
             ? { type: 'reply', error: errorMessage }
             : { type: 'reply', result };
         try {
-            fs.writeSync(this.fdWrite, JSON.stringify(reply) + '\n');
+            writeAll(this.fdWrite, JSON.stringify(reply) + '\n');
         } catch (e) {
             // The host died (or the pipe was closed mid-callback). Mark exited
             // so the next send() throws clearly instead of hanging in
@@ -133,7 +152,7 @@ export class IpcWorker {
         if (this.exited) throw new Error('JXA host has exited; cannot send further commands.');
         const seq = ++this.seqCounter;
         cmd._seq = seq;
-        try { fs.writeSync(this.fdWrite, JSON.stringify(cmd) + '\n'); }
+        try { writeAll(this.fdWrite, JSON.stringify(cmd) + '\n'); }
         catch (e: any) {
             this.exited = true;
             throw new Error(`JXA IPC pipe write failed (host likely exited): ${e?.message || e}`);

@@ -33,6 +33,12 @@ export function wrapArg(arg: any, ownerObjectId?: string): any {
         if ((arg as any).__syncReturn !== undefined) {
             descriptor.syncReturn = (arg as any).__syncReturn;
         }
+        if ((arg as any).__blockArgIndices !== undefined) {
+            descriptor.blockArgIndices = (arg as any).__blockArgIndices;
+        }
+        if ((arg as any).__blockArgValues !== undefined) {
+            descriptor.blockArgValues = (arg as any).__blockArgValues;
+        }
         return descriptor;
     }
 

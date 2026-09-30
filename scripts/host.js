@@ -37,7 +37,27 @@ var stderrFh = $.NSFileHandle.fileHandleWithStandardError;
 // re-reads `gesture.state` after sending an IPC ends up seeing 0.  Cocoa
 // itself uses NSConnectionReplyMode for the same purpose; we mirror that.
 var NESTED_MODE = $.NSString.stringWithUTF8String('NwjxaNestedReplyMode');
-var NESTED_MODES_ARR = $([NESTED_MODE, $.NSDefaultRunLoopMode]);
+// The IPC observer must stay armed across EVERY run-loop mode a nested JS
+// callback can re-enter, or a callback that opens a modal panel deadlocks.
+//
+// Concretely: a menu click is delivered inside NSMenuTrackingSession's event
+// loop (NSEventTrackingRunLoopMode).  Our menu-item callback fires there,
+// sends an IPC 'event' to Node, then processNestedCommands() pumps the loop
+// waiting for Node's {type:'reply'}.  While waiting, Node invokes
+// [NSOpenPanel runModal], which spins ANOTHER nested loop in
+// NSModalPanelRunLoopMode.  If the observer isn't armed for those modes, the
+// FIFO read notification never fires while the panel is up, so the reply
+// Node sends after the panel closes is never drained and the callback blocks
+// forever.  This is the run-loop analogue of a CPU masking an interrupt level
+// that a nested handler is waiting on: every level must stay unmasked.
+var NSModalPanelRunLoopMode = $.NSString.stringWithUTF8String('NSModalPanelRunLoopMode');
+var NSEventTrackingRunLoopMode = $.NSString.stringWithUTF8String('NSEventTrackingRunLoopMode');
+var NESTED_MODES_ARR = $([
+    NESTED_MODE,
+    $.NSDefaultRunLoopMode,
+    NSModalPanelRunLoopMode,
+    NSEventTrackingRunLoopMode
+]);
 
 // ---------- low-level I/O ----------
 
@@ -150,6 +170,8 @@ function ResolveArg(arg) {
     if (arg.type === 'callback') {
         var cbId = arg.callbackId;
         var syncReturnValue = arg.syncReturn !== undefined ? arg.syncReturn : null;
+        var blockArgIndices = arg.blockArgIndices;
+        var blockArgValues = arg.blockArgValues;
         if (arg.async) {
             return function() {
                 var cbArgs = [];
@@ -159,6 +181,20 @@ function ResolveArg(arg) {
             };
         }
         return function() {
+            // Call ObjC blocks IMMEDIATELY, before processNestedCommands()
+            // pumps the run loop. After the pump, ObjC block refs still
+            // pass typeof==='function' but throw "Object is not a function"
+            // (JXA/JSC bridge quirk).  blockArgValues[i] maps to blockArgIndices[i].
+            if (blockArgIndices && blockArgValues) {
+                for (var j = 0; j < blockArgIndices.length; j++) {
+                    var bi = blockArgIndices[j];
+                    var val = blockArgValues[j];
+                    if (typeof arguments[bi] === 'function') {
+                        try { arguments[bi](val); }
+                        catch (e) { /* block already in-flight */ }
+                    }
+                }
+            }
             var cbArgs = [];
             for (var i = 0; i < arguments.length; i++) cbArgs.push(ConvertToProtocol(arguments[i]));
             writeRaw(JSON.stringify({ type: 'event', callbackId: cbId, args: cbArgs }));
