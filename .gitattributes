@@ -2,3 +2,13 @@
 # core.autocrlf setting.  `text=auto` lets Git auto-detect binary files
 # (which contain NUL bytes) and leave them untouched.
 * text=auto eol=lf
+
+# Explicit binary types — never normalize, never diff as text.
+*.dll binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+.DS_Store binary
