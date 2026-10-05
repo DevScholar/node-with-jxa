@@ -75,6 +75,19 @@ export class IpcWorker {
         );
     }
 
+    /** Mark the host as exited and drop the worker/port refs so Node's event
+     *  loop can drain (letting lifecycle's `beforeExit` → cleanup() run).  The
+     *  worker is re-ref'd by refForApp() when a GUI run loop starts; once the
+     *  host dies there is nothing left to keep alive, so un-ref it here or the
+     *  process hangs forever (the mac twin of the win-side `worker.unref()`
+     *  await-delay bug). */
+    private markExited(): void {
+        if (this.exited) return;
+        this.exited = true;
+        this.worker.unref();
+        (this.port as any).unref?.();
+    }
+
     private readOne(): { kind: string; data?: any } {
         let msg: ReturnType<typeof receiveMessageOnPort>;
         // Drain anything already queued without blocking first.
@@ -115,7 +128,7 @@ export class IpcWorker {
             // The host died (or the pipe was closed mid-callback). Mark exited
             // so the next send() throws clearly instead of hanging in
             // waitResponse.
-            this.exited = true;
+            this.markExited();
             console.error('[node-with-jxa] Failed to send callback reply (pipe closed):', e);
         }
     }
@@ -130,7 +143,7 @@ export class IpcWorker {
             }
             const msg = this.readOne();
             if (msg.kind === 'eof') {
-                this.exited = true;
+                this.markExited();
                 throw new Error('JXA host exited unexpectedly (likely a JXA crash). The last call probably triggered an internal JXA bug — try a different API.');
             }
             if (msg.kind === 'event') { this.handleEvent(msg.data); continue; }
@@ -154,7 +167,7 @@ export class IpcWorker {
         cmd._seq = seq;
         try { writeAll(this.fdWrite, JSON.stringify(cmd) + '\n'); }
         catch (e: any) {
-            this.exited = true;
+            this.markExited();
             throw new Error(`JXA IPC pipe write failed (host likely exited): ${e?.message || e}`);
         }
         return this.waitResponse(seq);
@@ -167,7 +180,7 @@ export class IpcWorker {
             const { kind, data } = msg.message;
             if (kind === 'event') this.handleEvent(data);
             else if (kind === 'async_event') this.handleAsyncEvent(data);
-            else if (kind === 'eof') { this.exited = true; break; }
+            else if (kind === 'eof') { this.markExited(); break; }
         }
     }
 

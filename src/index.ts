@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { initialize } from './lifecycle.js';
 import { startPolling, addPostDrainHook, removePostDrainHook } from './poll.js';
 import { createProxy } from './proxy.js';
@@ -73,6 +74,43 @@ export function releaseObject(proxy: JxaRef): void {
 export function startEventDrain(): void {
     initialize();
     startPolling();
+}
+
+/**
+ * Register a WKURLSchemeHandler whose start callback runs inline in the JXA
+ * host process (extracting url/method/body without any Node IPC) and pushes a
+ * single async_event to `callback` with `(url, method, body, taskId)`.
+ *
+ * This is the low-level transport used by node-with-window's macOS backend to
+ * make `nww://` requests fast: the per-request path drops from ~15 FIFO
+ * round-trips (one per ObjC property access through the proxy) to two.
+ *
+ * Returns the handler ref, which the caller passes to
+ * `config.setURLSchemeHandlerForURLScheme(handler, 'nww')`.
+ */
+export function registerNwwSchemeHandler(
+    name: string,
+    callback: (url: string, method: string, body: string | null, taskId: string) => void,
+): any {
+    initialize();
+    const cbId = `cb_${randomUUID()}`;
+    callbackRegistry.set(cbId, callback as unknown as Function);
+    const res = getIpc()!.send({ action: 'RegisterNwwSchemeHandler', callbackId: cbId, name });
+    return createProxy(res);
+}
+
+/**
+ * Complete an nww:// scheme task started by a registerNwwSchemeHandler
+ * callback.  Constructs the HTTP response inline in the host process.
+ * `result` is either `{ status, mimeType, body }` or `{ error }`.
+ */
+export function completeNwwSchemeTask(
+    taskId: string,
+    result: { status?: number; mimeType?: string; body?: string } | { error: string },
+): void {
+    const ipc = getIpc();
+    if (!ipc) return;
+    ipc.send({ action: 'NwwSchemeResponse', taskId, ...(result as object) });
 }
 
 export function drainCallbacks(): void {

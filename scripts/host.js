@@ -460,6 +460,98 @@ function executeCommand(cmd) {
         appTarget = t;
         return { type: 'run_started' };
     }
+    if (cmd.action === 'RegisterNwwSchemeHandler') {
+        // Register a WKURLSchemeHandler whose start callback runs ENTIRELY on
+        // this host thread, extracting url/method/body inline (zero Node IPC)
+        // and pushing them to Node as a single async_event.  Node replies via
+        // NwwSchemeResponse, which constructs the HTTP response inline here.
+        // This collapses a ~15-round-trip per-request path (each ObjC property
+        // access through the Node proxy is its own FIFO round-trip) down to
+        // two: host→Node event + Node→host response.
+        var cbId = cmd.callbackId;
+        var handlerName = cmd.name;
+        ObjC.import('WebKit');
+        ObjC.registerSubclass({
+            name: handlerName,
+            superclass: 'NSObject',
+            protocols: ['WKURLSchemeHandler'],
+            methods: {
+                'webView:startURLSchemeTask:': {
+                    types: ['void', ['id', 'id']],
+                    implementation: function(webView, task) {
+                        try {
+                            var req = task.request;
+                            var url = ObjC.unwrap(req.URL.absoluteString) || '';
+                            var method = ObjC.unwrap(req.HTTPMethod) || 'GET';
+                            var body = null;
+                            if (method === 'POST') {
+                                var bodyData = req.HTTPBody;
+                                if (bodyData) {
+                                    var ns = $.NSString.alloc.initWithDataEncoding(bodyData, 4);
+                                    body = ObjC.unwrap(ns) || null;
+                                }
+                            }
+                            var taskId = storeObject(task);
+                            writeRaw(JSON.stringify({
+                                type: 'async_event',
+                                callbackId: cbId,
+                                args: [
+                                    { type: 'primitive', value: url },
+                                    { type: 'primitive', value: method },
+                                    { type: 'primitive', value: body },
+                                    { type: 'primitive', value: taskId }
+                                ]
+                            }));
+                        } catch (e) {
+                            debugLog('nww scheme handler error: ' + e);
+                        }
+                    }
+                },
+                'webView:stopURLSchemeTask:': {
+                    types: ['void', ['id', 'id']],
+                    implementation: function(webView, task) {
+                        // No-op: nww:// requests are handled synchronously.
+                    }
+                }
+            }
+        });
+        var handler = $[handlerName].alloc.init;
+        // Return the handler ref so the Node side can call
+        // config.setURLSchemeHandlerForURLScheme(handler, 'nww') once at setup.
+        return ConvertToProtocol(handler);
+    }
+    if (cmd.action === 'NwwSchemeResponse') {
+        var task = objectStore[cmd.taskId];
+        if (!task) return { type: 'void' };
+        if (cmd.error) {
+            var nsErr = $.NSError.alloc.initWithDomainCodeUserInfo(
+                'NwjxaSchemeHandler', -1,
+                $.NSDictionary.dictionaryWithObjectForKey(cmd.error, $.NSLocalizedDescriptionKey)
+            );
+            try { task.didFailWithError(nsErr); } catch (e) {}
+        } else {
+            var statusCode = cmd.status === 204 ? 204 : 200;
+            var bodyStr = cmd.status === 204 ? '' : (cmd.body || '');
+            var nsStr = $.NSString.stringWithUTF8String(bodyStr);
+            var data = nsStr.dataUsingEncoding(4);
+            var response = $.NSHTTPURLResponse.alloc.initWithURLStatusCodeHTTPVersionHeaderFields(
+                task.request.URL, statusCode, 'HTTP/1.1',
+                {
+                    'Content-Type': cmd.mimeType || 'text/plain',
+                    'Content-Length': String(data.length)
+                }
+            );
+            try { task.didReceiveResponse(response); } catch (e) {}
+            if (cmd.status !== 204) {
+                try { task.didReceiveData(data); } catch (e) {}
+            }
+            // didFinish is a zero-arg ObjC method; JXA auto-invokes it on bare
+            // property access, so the parens form would call the void result.
+            try { task.didFinish; } catch (e) {}
+        }
+        delete objectStore[cmd.taskId];
+        return { type: 'void' };
+    }
     throw new Error("Unknown action: " + cmd.action);
 }
 
