@@ -5,6 +5,7 @@
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",
   "type": "module",
+  "os": ["darwin"],
   "license": "MIT",
   "author": "DevScholar",
   "repository": {
